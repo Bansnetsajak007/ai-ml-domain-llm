@@ -1,15 +1,37 @@
 import asyncio
 import json
 import os
+import sys
 from openai import OpenAI
 import dotenv
 
 dotenv.load_dotenv()
-client = OpenAI()
+
+# Environment validation
+required_env_vars = ['OPENAI_API_KEY', 'SUPABASE_URL', 'SUPABASE_KEY']
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    print(f"❌ ERROR: Missing required environment variables: {', '.join(missing_vars)}")
+    print("\nPlease create a .env file with:")
+    print("  OPENAI_API_KEY=your-key")
+    print("  SUPABASE_URL=your-supabase-url")
+    print("  SUPABASE_KEY=your-supabase-key")
+    sys.exit(1)
+
+try:
+    client = OpenAI()
+except Exception as e:
+    print(f"❌ ERROR: Failed to initialize OpenAI client: {e}")
+    sys.exit(1)
 
 # Import the core download function and memory system
 from mcp_server import core_download_logic
 from memory import AgentMemory
+
+# Configuration
+MAX_DOWNLOADS_PER_ACCOUNT = int(os.getenv("MAX_DOWNLOADS_PER_ACCOUNT", "9"))
+MAX_CONVERSATION_HISTORY = int(os.getenv("MAX_CONVERSATION_HISTORY", "20"))  # Prevent memory leak
+MAX_RETRIES = 3
 
 # --- RAMESH ASCII BANNER ---
 RAMESH_BANNER = """
@@ -165,14 +187,40 @@ class LibrarianAgent:
         self.accounts = self._load_accounts()
         self.current_account_idx = 0
         self.downloads_on_current_account = 0
-        self.max_per_account = 9
+        self.max_per_account = MAX_DOWNLOADS_PER_ACCOUNT
         self.session_downloads = []  # Track what we've downloaded
         self.conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
-        self.memory = AgentMemory()  # Shared memory system
+        
+        # Initialize memory with proper error handling
+        try:
+            self.memory = AgentMemory()  # Shared memory system
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to initialize shared memory: {e}")
+            print("   Continuing without duplicate detection...")
+            self.memory = None
     
     def _load_accounts(self):
-        with open("accounts.json", "r") as f:
-            return json.load(f)
+        try:
+            with open("accounts.json", "r") as f:
+                accounts = json.load(f)
+                if not accounts:
+                    raise ValueError("No accounts found in accounts.json")
+                return accounts
+        except FileNotFoundError:
+            print("❌ ERROR: accounts.json not found")
+            sys.exit(1)
+        except json.JSONDecodeError:
+            print("❌ ERROR: accounts.json is invalid JSON")
+            sys.exit(1)
+    
+    def _trim_conversation_history(self):
+        """Trim conversation history to prevent memory leak and token overflow."""
+        # Keep system prompt + last N messages
+        if len(self.conversation) > MAX_CONVERSATION_HISTORY:
+            system_msg = self.conversation[0]
+            recent_msgs = self.conversation[-(MAX_CONVERSATION_HISTORY-1):]
+            self.conversation = [system_msg] + recent_msgs
+            print(f"\n💡 Trimmed conversation history to last {MAX_CONVERSATION_HISTORY} messages")
     
     @property
     def current_account(self):
@@ -293,13 +341,30 @@ class LibrarianAgent:
         
         self.conversation.append({"role": "user", "content": user_message})
         
+        # Trim history to prevent memory leak
+        self._trim_conversation_history()
+        
         while True:  # Loop to handle multiple tool calls
-            response = client.chat.completions.create(
-                model="gpt-4o",  # Use gpt-4o for best reasoning
-                messages=self.conversation,
-                tools=TOOLS,
-                tool_choice="auto"
-            )
+            # Retry logic for LLM calls
+            last_error = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-4o",  # Use gpt-4o for best reasoning
+                        messages=self.conversation,
+                        tools=TOOLS,
+                        tool_choice="auto",
+                        timeout=30
+                    )
+                    break  # Success
+                except Exception as e:
+                    last_error = e
+                    if attempt < MAX_RETRIES - 1:
+                        wait_time = 2 ** attempt  # Exponential backoff
+                        print(f"\n⚠️ LLM call failed (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        return f"❌ Sorry, I'm having trouble connecting to my brain right now. Error: {str(last_error)}"
             
             message = response.choices[0].message
             
@@ -359,15 +424,21 @@ async def main():
     print("🙏 Namaste! I'm Ramesh, your AI-powered data collector.")
     print("")
     print("👤 Who are you? (This helps me track who downloaded what)")
-    user_name = input("   Your name: ").strip()
+    user_name_input = input("   Your name: ").strip()
     
+    # Sanitize user input
+    user_name = "".join(c for c in user_name_input if c.isalnum() or c in (' ', '-', '_'))[:50]
     if not user_name:
         user_name = "anonymous"
     
     agent = LibrarianAgent(user_name=user_name)
     
-    # Show memory stats
-    stats = agent.memory.get_stats()
+    # Show memory stats (with error handling)
+    try:
+        stats = agent.memory.get_stats() if agent.memory else {"total_books": 0, "by_user": {}}
+    except Exception as e:
+        print(f"⚠️ Could not retrieve memory stats: {e}")
+        stats = {"total_books": 0, "by_user": {}}
     
     name_lower = user_name.lower()
     if name_lower == "sajak":
