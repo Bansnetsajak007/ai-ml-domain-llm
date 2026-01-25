@@ -50,6 +50,102 @@ This wasn't just about automation. This was about creating a **collaborative AI 
 
 ---
 
+## ☁️ The Cloud Migration Story
+
+### Why We Moved from SQLite to Supabase
+
+When Sajak first built RAMESH, it used **SQLite** — a local database file. This worked great for one person, but there was a problem:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     THE PROBLEM                                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   Sajak's PC                    Friend's PC                    │
+│   ├── memory.db                 ├── memory.db                   │
+│   │   └── 50 books               │   └── 0 books (empty!)        │
+│   │                              │                               │
+│   └── Downloads:                └── Downloads:                  │
+│       "Deep Learning" ✅             "Deep Learning" ❌ DUPLICATE!│
+│                                                                 │
+│   ❌ Each person has SEPARATE memory                            │
+│   ❌ They download the SAME books                               │
+│   ❌ Team effort is WASTED                                      │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### The Solution: Supabase Cloud Database
+
+Sajak migrated RAMESH's memory to **Supabase** — a free, cloud-hosted PostgreSQL database that everyone can connect to:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     THE SOLUTION                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│                    ☁️ SUPABASE CLOUD                            │
+│                    ┌───────────────────┐                         │
+│                    │  book_memory    │                         │
+│                    │  ─────────────  │                         │
+│                    │  50 books       │                         │
+│                    │  (shared!)      │                         │
+│                    └─────────┬─────────┘                         │
+│                              │                                  │
+│         ┌───────────────────┼───────────────────┐              │
+│         │                   │                   │              │
+│         ▼                   ▼                   ▼              │
+│   ┌──────────┐        ┌──────────┐        ┌──────────┐       │
+│   │  Sajak   │        │ Friend 1 │        │ Friend 2 │       │
+│   │  RAMESH  │        │  RAMESH  │        │  RAMESH  │       │
+│   └──────────┘        └──────────┘        └──────────┘       │
+│                                                                 │
+│   ✅ Everyone sees the SAME memory                              │
+│   ✅ No duplicate downloads                                     │
+│   ✅ Team effort is MAXIMIZED                                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Why Supabase?
+
+| Feature | SQLite (Before) | Supabase (After) |
+|---------|-----------------|------------------|
+| **Multi-user** | ❌ Local only | ✅ Cloud shared |
+| **Cost** | Free | ✅ Free tier (500MB) |
+| **Setup** | Easy | Easy (5 mins) |
+| **Team sync** | ❌ Impossible | ✅ Real-time |
+| **Scalability** | ❌ Limited | ✅ PostgreSQL power |
+
+### What's Stored in the Cloud?
+
+**Only lightweight data** — not the actual books!
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SUPABASE CLOUD (~6KB per book)                                 │
+├─────────────────────────────────────────────────────────────────┤
+│  • Book title: "Deep Learning"                                  │
+│  • Author: "Ian Goodfellow"                                     │
+│  • Embedding: [0.023, -0.156, ...]  (for similarity search)     │
+│  • Downloaded by: "Sajak"                                       │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  YOUR LOCAL PC (big files stay here!)                          │
+├─────────────────────────────────────────────────────────────────┤
+│  📚 data/books/                                                 │
+│     ├── Deep Learning.pdf              (15 MB)                  │
+│     ├── PyTorch Guide.epub             (8 MB)                   │
+│     └── ML Basics.pdf                  (12 MB)                  │
+│                                                                 │
+│  ❌ These are NOT uploaded to cloud                             │
+│  ✅ They stay on YOUR machine                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## 🎯 What Does RAMESH Do?
 
 **RAMESH** (named with love for that humble Nepali charm 😄) is an autonomous AI system that helps researchers and developers build datasets by automatically downloading books from online libraries (like Z-Library), while ensuring:
@@ -519,13 +615,13 @@ DataCollectornValidatorAgent/
 │
 ├── 🔧 mcp_server.py         # Core download automation
 │
-├── 🧠 memory.py             # Shared memory with embeddings
+├── 🧠 memory.py             # Supabase cloud memory system
 │
-├── 🔑 accounts.json         # Z-Library account credentials
+├── 🔑 accounts.json         # YOUR Z-Library account credentials
 │
-├── 💾 agent_memory.db       # SQLite database (shared memory)
+├── 📝 .env                   # Supabase + OpenAI credentials
 │
-├── 💾 shared_memory.db      # Local download history
+├── 📦 requirements.txt      # Python dependencies
 │
 ├── 📁 data/
 │   ├── 📚 books/            # Downloaded books go here!
@@ -533,21 +629,73 @@ DataCollectornValidatorAgent/
 │
 └── 📖 AgentDescription.md   # This file!
 ```
+```
 
 ---
 
-## 🚀 How to Run the Agent
+## 🚀 How to Run RAMESH
 
-### Step 1: Make sure dependencies are installed
+### Step 1: Install dependencies
 ```bash
-pip install openai playwright python-dotenv fastmcp numpy
+pip install -r requirements.txt
 playwright install
 ```
 
-### Step 2: Set up your OpenAI API key
+### Step 2: Set up Supabase (One-time, done by Sajak)
+
+1. Go to [supabase.com](https://supabase.com) and create a free account
+2. Create a new project
+3. Go to **SQL Editor** and run this:
+
+```sql
+CREATE TABLE IF NOT EXISTS book_memory (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    authors TEXT,
+    source TEXT,
+    search_topic TEXT,
+    embedding FLOAT8[],
+    downloaded_by TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_normalized_title ON book_memory(normalized_title);
+CREATE INDEX IF NOT EXISTS idx_downloaded_by ON book_memory(downloaded_by);
+```
+
+4. Go to **Settings > API** and copy your URL and anon key
+
+### Step 3: Create your .env file
 ```bash
-# Create a .env file with:
-OPENAI_API_KEY=your-key-here
+# .env file
+OPENAI_API_KEY=your-openai-key
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-anon-public-key
+```
+
+### Step 4: Set up the local database
+```bash
+python setup_db.py
+```
+
+### Step 5: Add your Z-Library accounts
+Edit `accounts.json` with YOUR credentials:
+```json
+[
+  {
+    "name": "YourAccount",
+    "remix_userid": "your-user-id",
+    "remix_userkey": "your-user-key",
+    "daily_limit": 9
+  }
+]
+```
+
+### Step 6: Run RAMESH!
+```bash
+python agent.py
+```
 ```
 
 ### Step 3: Run the agent!

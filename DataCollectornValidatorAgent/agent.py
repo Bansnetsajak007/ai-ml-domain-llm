@@ -369,7 +369,19 @@ async def main():
     # Show memory stats
     stats = agent.memory.get_stats()
     
-    print(f"\n� Welcome, {user_name} dai/didi!")
+    name_lower = user_name.lower()
+    if name_lower == "sajak":
+        greeting_suffix = "dai"  # malai matra dai vanxa hahahahahahahaha
+    elif name_lower == "dipsan":
+        greeting_suffix = "didi"
+    elif name_lower == "siddarth":
+        greeting_suffix = "muji"
+    elif name_lower == "ronish":
+        greeting_suffix = "Please"
+    else:
+        greeting_suffix = "dai/didi"  # Default for others
+    
+    print(f"\n🙏 Welcome, {user_name} {greeting_suffix}!")
     print(f"")
     print(f"┌─────────────────────────────────────────────────────────────────┐")
     print(f"│  📊 STATUS                                                      │")

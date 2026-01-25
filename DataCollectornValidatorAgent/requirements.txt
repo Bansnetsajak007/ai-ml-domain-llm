@@ -2,3 +2,5 @@ fastmcp
 playwright
 openai
 python-dotenv
+postgrest
+numpy
