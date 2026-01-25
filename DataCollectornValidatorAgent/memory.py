@@ -1,62 +1,112 @@
 """
-Memory System for AI Librarian Agent
-=====================================
-Stores embeddings of downloaded book metadata to prevent duplicates
-across multiple users.
+RAMESH Memory System - Supabase Edition ☁️
+============================================
+Cloud-based shared memory for multi-user duplicate detection.
 
-Flow:
-1. BEFORE download: Read memory, check if similar book exists
-2. AFTER download: Write new book metadata + embedding to memory
+Why Supabase?
+- 4 team members need to share the same memory
+- SQLite is local-only, can't sync across PCs
+- Supabase = Free PostgreSQL in the cloud
+- Everyone connects to the same database!
+
+Architecture:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   Sajak's PC ──────┐                                            │
+│   Friend 1's PC ───┼──────►  SUPABASE CLOUD  ◄───── All users   │
+│   Friend 2's PC ───┘         (shared memory)        see same    │
+│                                                     data!       │
+└─────────────────────────────────────────────────────────────────┘
+
 """
 
-import json
 import os
-import sqlite3
 import numpy as np
 from openai import OpenAI
+from postgrest import SyncPostgrestClient
 import dotenv
 
 dotenv.load_dotenv()
-client = OpenAI()
 
-MEMORY_DB_PATH = "agent_memory.db"
+# OpenAI for embeddings
+openai_client = OpenAI()
+
+# Supabase connection
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # Use the 'anon' public key
+
 SIMILARITY_THRESHOLD = 0.85  # Books with similarity > 85% are considered duplicates
+
+# Initialize PostgREST client
+postgrest_client = None
+
+
+def get_postgrest() -> SyncPostgrestClient:
+    """Get or create PostgREST client for Supabase."""
+    global postgrest_client
+    if postgrest_client is None:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError(
+                "❌ Supabase credentials not found!\n"
+                "   Please add to your .env file:\n"
+                "   SUPABASE_URL=your-project-url\n"
+                "   SUPABASE_KEY=your-anon-key"
+            )
+        # Supabase REST API is at /rest/v1
+        rest_url = f"{SUPABASE_URL}/rest/v1"
+        postgrest_client = SyncPostgrestClient(
+            rest_url,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}"
+            }
+        )
+    return postgrest_client
 
 
 def init_memory_db():
-    """Initialize the memory database with embeddings support."""
-    conn = sqlite3.connect(MEMORY_DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS book_memory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            normalized_title TEXT NOT NULL,
-            authors TEXT,
-            source TEXT,
-            search_topic TEXT,
-            embedding BLOB,
-            downloaded_by TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    # Index for fast lookups
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_normalized_title 
-        ON book_memory(normalized_title)
-    """)
-    
-    conn.commit()
-    conn.close()
-    print("✅ Memory database initialized!")
+    """
+    Initialize the Supabase table.
+    Run this ONCE to create the table structure.
+    """
+    print("="*60)
+    print("🚀 SUPABASE MEMORY SETUP")
+    print("="*60)
+    print("")
+    print("To create the table, go to your Supabase Dashboard:")
+    print("1. Open SQL Editor")
+    print("2. Run this SQL:")
+    print("")
+    print("-"*60)
+    sql = """
+CREATE TABLE IF NOT EXISTS book_memory (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    authors TEXT,
+    source TEXT,
+    search_topic TEXT,
+    embedding FLOAT8[],
+    downloaded_by TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_normalized_title ON book_memory(normalized_title);
+CREATE INDEX IF NOT EXISTS idx_downloaded_by ON book_memory(downloaded_by);
+    """
+    print(sql)
+    print("-"*60)
+    print("")
+    print("3. Click 'Run'")
+    print("")
+    print("✅ Then you're ready to use Ramesh!")
+    print("="*60)
 
 
 def get_embedding(text: str) -> list:
     """Generate embedding for text using OpenAI."""
     try:
-        response = client.embeddings.create(
+        response = openai_client.embeddings.create(
             model="text-embedding-3-small",  # Fast and cheap
             input=text
         )
@@ -70,30 +120,20 @@ def cosine_similarity(a: list, b: list) -> float:
     """Calculate cosine similarity between two vectors."""
     a = np.array(a)
     b = np.array(b)
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
-
-def embedding_to_bytes(embedding: list) -> bytes:
-    """Convert embedding list to bytes for storage."""
-    return np.array(embedding, dtype=np.float32).tobytes()
-
-
-def bytes_to_embedding(data: bytes) -> list:
-    """Convert bytes back to embedding list."""
-    return np.frombuffer(data, dtype=np.float32).tolist()
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
 class AgentMemory:
     """
-    Memory system for the AI Librarian Agent.
-    Stores and retrieves book information with semantic search.
+    Cloud-based Memory System for RAMESH Agent.
+    Uses Supabase for multi-user shared memory.
+    
+    🇳🇵 "Ramesh never forgets, and now your whole team won't either!"
     """
     
     def __init__(self):
-        # Ensure DB exists
-        if not os.path.exists(MEMORY_DB_PATH):
-            init_memory_db()
-        self._cache = {}  # Cache embeddings in memory for speed
+        self.client = get_postgrest()
+        self._cache = {}  # Local cache for speed
     
     def _get_book_text(self, title: str, authors: str = "") -> str:
         """Create searchable text from book metadata."""
@@ -101,7 +141,7 @@ class AgentMemory:
     
     def check_duplicate(self, title: str, authors: str = "") -> dict:
         """
-        Check if a similar book already exists in memory.
+        Check if a similar book already exists in shared memory.
         
         Returns:
             {
@@ -117,80 +157,73 @@ class AgentMemory:
             # Fallback to exact title match if embedding fails
             return self._check_exact_match(title)
         
-        conn = sqlite3.connect(MEMORY_DB_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, title, authors, embedding, downloaded_by 
-            FROM book_memory 
-            WHERE embedding IS NOT NULL
-        """)
-        
-        max_similarity = 0.0
-        most_similar = None
-        
-        for row in cursor.fetchall():
-            book_id, stored_title, stored_authors, embedding_bytes, downloaded_by = row
+        # Fetch all embeddings from Supabase
+        try:
+            response = self.client.from_("book_memory").select(
+                "id, title, authors, embedding, downloaded_by"
+            ).not_.is_("embedding", "null").execute()
             
-            if embedding_bytes:
-                stored_embedding = bytes_to_embedding(embedding_bytes)
-                similarity = cosine_similarity(new_embedding, stored_embedding)
-                
-                if similarity > max_similarity:
-                    max_similarity = similarity
-                    most_similar = {
-                        "id": book_id,
-                        "title": stored_title,
-                        "authors": stored_authors,
-                        "downloaded_by": downloaded_by,
-                        "similarity": similarity
-                    }
-        
-        conn.close()
-        
-        is_dup = max_similarity >= SIMILARITY_THRESHOLD
-        
-        return {
-            "is_duplicate": is_dup,
-            "similar_book": most_similar if is_dup else None,
-            "similarity": max_similarity
-        }
+            max_similarity = 0.0
+            most_similar = None
+            
+            for row in response.data:
+                if row.get("embedding"):
+                    stored_embedding = row["embedding"]
+                    similarity = cosine_similarity(new_embedding, stored_embedding)
+                    
+                    if similarity > max_similarity:
+                        max_similarity = similarity
+                        most_similar = {
+                            "id": row["id"],
+                            "title": row["title"],
+                            "authors": row["authors"],
+                            "downloaded_by": row["downloaded_by"],
+                            "similarity": similarity
+                        }
+            
+            is_dup = max_similarity >= SIMILARITY_THRESHOLD
+            
+            return {
+                "is_duplicate": is_dup,
+                "similar_book": most_similar if is_dup else None,
+                "similarity": max_similarity
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Supabase query failed: {e}")
+            return {"is_duplicate": False, "similar_book": None, "similarity": 0.0}
     
     def _check_exact_match(self, title: str) -> dict:
         """Fallback: Check for exact normalized title match."""
         normalized = title.lower().strip()
         
-        conn = sqlite3.connect(MEMORY_DB_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, title, authors, downloaded_by 
-            FROM book_memory 
-            WHERE normalized_title = ?
-        """, (normalized,))
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            return {
-                "is_duplicate": True,
-                "similar_book": {
-                    "id": row[0],
-                    "title": row[1],
-                    "authors": row[2],
-                    "downloaded_by": row[3],
+        try:
+            response = self.client.from_("book_memory").select(
+                "id, title, authors, downloaded_by"
+            ).eq("normalized_title", normalized).execute()
+            
+            if response.data:
+                row = response.data[0]
+                return {
+                    "is_duplicate": True,
+                    "similar_book": {
+                        "id": row["id"],
+                        "title": row["title"],
+                        "authors": row["authors"],
+                        "downloaded_by": row["downloaded_by"],
+                        "similarity": 1.0
+                    },
                     "similarity": 1.0
-                },
-                "similarity": 1.0
-            }
+                }
+        except Exception as e:
+            print(f"⚠️ Exact match check failed: {e}")
         
         return {"is_duplicate": False, "similar_book": None, "similarity": 0.0}
     
     def add_book(self, title: str, authors: str, source: str, 
                  search_topic: str, downloaded_by: str) -> bool:
         """
-        Add a new book to memory after downloading.
+        Add a new book to shared cloud memory after downloading.
         
         Returns:
             True if added successfully, False otherwise
@@ -198,183 +231,166 @@ class AgentMemory:
         book_text = self._get_book_text(title, authors)
         embedding = get_embedding(book_text)
         
-        conn = sqlite3.connect(MEMORY_DB_PATH)
-        cursor = conn.cursor()
-        
         try:
-            cursor.execute("""
-                INSERT INTO book_memory 
-                (title, normalized_title, authors, source, search_topic, embedding, downloaded_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                title,
-                title.lower().strip(),
-                authors,
-                source,
-                search_topic,
-                embedding_to_bytes(embedding) if embedding else None,
-                downloaded_by
-            ))
+            data = {
+                "title": title,
+                "normalized_title": title.lower().strip(),
+                "authors": authors,
+                "source": source,
+                "search_topic": search_topic,
+                "embedding": embedding,
+                "downloaded_by": downloaded_by
+            }
             
-            conn.commit()
-            conn.close()
+            self.client.from_("book_memory").insert(data).execute()
             return True
             
         except Exception as e:
-            print(f"⚠️ Failed to add book to memory: {e}")
-            conn.close()
+            print(f"⚠️ Failed to add book to Supabase: {e}")
             return False
     
     def get_all_books(self) -> list:
-        """Get all books in memory."""
-        conn = sqlite3.connect(MEMORY_DB_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT title, authors, source, search_topic, downloaded_by, timestamp
-            FROM book_memory
-            ORDER BY timestamp DESC
-        """)
-        
-        books = []
-        for row in cursor.fetchall():
-            books.append({
-                "title": row[0],
-                "authors": row[1],
-                "source": row[2],
-                "search_topic": row[3],
-                "downloaded_by": row[4],
-                "timestamp": row[5]
-            })
-        
-        conn.close()
-        return books
+        """Get all books in shared memory."""
+        try:
+            response = self.client.from_("book_memory").select(
+                "title, authors, source, search_topic, downloaded_by, created_at"
+            ).order("created_at", desc=True).execute()
+            
+            return [
+                {
+                    "title": row["title"],
+                    "authors": row["authors"],
+                    "source": row["source"],
+                    "search_topic": row["search_topic"],
+                    "downloaded_by": row["downloaded_by"],
+                    "timestamp": row["created_at"]
+                }
+                for row in response.data
+            ]
+        except Exception as e:
+            print(f"⚠️ Failed to fetch books: {e}")
+            return []
     
     def get_books_by_topic(self, topic: str) -> list:
         """Get all books downloaded for a specific topic."""
-        conn = sqlite3.connect(MEMORY_DB_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT title, authors, downloaded_by
-            FROM book_memory
-            WHERE search_topic LIKE ?
-        """, (f"%{topic}%",))
-        
-        books = [{"title": r[0], "authors": r[1], "downloaded_by": r[2]} 
-                 for r in cursor.fetchall()]
-        
-        conn.close()
-        return books
+        try:
+            response = self.client.from_("book_memory").select(
+                "title, authors, downloaded_by"
+            ).ilike("search_topic", f"%{topic}%").execute()
+            
+            return [
+                {"title": r["title"], "authors": r["authors"], "downloaded_by": r["downloaded_by"]} 
+                for r in response.data
+            ]
+        except Exception as e:
+            print(f"⚠️ Topic search failed: {e}")
+            return []
     
     def get_stats(self) -> dict:
-        """Get memory statistics."""
-        conn = sqlite3.connect(MEMORY_DB_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) FROM book_memory")
-        total = cursor.fetchone()[0]
-        
-        cursor.execute("""
-            SELECT downloaded_by, COUNT(*) 
-            FROM book_memory 
-            GROUP BY downloaded_by
-        """)
-        by_user = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        cursor.execute("""
-            SELECT search_topic, COUNT(*) 
-            FROM book_memory 
-            GROUP BY search_topic
-            ORDER BY COUNT(*) DESC
-            LIMIT 10
-        """)
-        by_topic = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        conn.close()
-        
-        return {
-            "total_books": total,
-            "by_user": by_user,
-            "top_topics": by_topic
-        }
+        """Get memory statistics for the whole team."""
+        try:
+            # Get all books
+            response = self.client.from_("book_memory").select(
+                "downloaded_by, search_topic"
+            ).execute()
+            
+            total = len(response.data)
+            
+            # Count by user
+            by_user = {}
+            by_topic = {}
+            
+            for row in response.data:
+                user = row.get("downloaded_by", "unknown")
+                topic = row.get("search_topic", "unknown")
+                
+                by_user[user] = by_user.get(user, 0) + 1
+                by_topic[topic] = by_topic.get(topic, 0) + 1
+            
+            # Sort topics by count
+            sorted_topics = dict(sorted(by_topic.items(), key=lambda x: x[1], reverse=True)[:10])
+            
+            return {
+                "total_books": total,
+                "by_user": by_user,
+                "top_topics": sorted_topics
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Stats query failed: {e}")
+            return {"total_books": 0, "by_user": {}, "top_topics": {}}
     
     def search_similar(self, query: str, limit: int = 5) -> list:
-        """Search for books similar to a query."""
+        """Search for books similar to a query using embeddings."""
         query_embedding = get_embedding(query)
         
         if query_embedding is None:
             return []
         
-        conn = sqlite3.connect(MEMORY_DB_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT title, authors, embedding, downloaded_by 
-            FROM book_memory 
-            WHERE embedding IS NOT NULL
-        """)
-        
-        results = []
-        for row in cursor.fetchall():
-            title, authors, embedding_bytes, downloaded_by = row
+        try:
+            response = self.client.from_("book_memory").select(
+                "title, authors, embedding, downloaded_by"
+            ).not_.is_("embedding", "null").execute()
             
-            if embedding_bytes:
-                stored_embedding = bytes_to_embedding(embedding_bytes)
-                similarity = cosine_similarity(query_embedding, stored_embedding)
-                results.append({
-                    "title": title,
-                    "authors": authors,
-                    "downloaded_by": downloaded_by,
-                    "similarity": similarity
-                })
-        
-        conn.close()
-        
-        # Sort by similarity and return top results
-        results.sort(key=lambda x: x["similarity"], reverse=True)
-        return results[:limit]
+            results = []
+            for row in response.data:
+                if row.get("embedding"):
+                    similarity = cosine_similarity(query_embedding, row["embedding"])
+                    results.append({
+                        "title": row["title"],
+                        "authors": row["authors"],
+                        "downloaded_by": row["downloaded_by"],
+                        "similarity": similarity
+                    })
+            
+            # Sort by similarity and return top results
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            return results[:limit]
+            
+        except Exception as e:
+            print(f"⚠️ Search failed: {e}")
+            return []
 
 
-# Initialize DB on import
-if not os.path.exists(MEMORY_DB_PATH):
-    init_memory_db()
-
-
-# Quick test
+# Quick test / setup
 if __name__ == "__main__":
-    print("Testing Memory System...\n")
+    print("")
+    print("╔═══════════════════════════════════════════════════════════════════╗")
+    print("║  RAMESH MEMORY SYSTEM - SUPABASE CLOUD EDITION ☁️                 ║")
+    print("╚═══════════════════════════════════════════════════════════════════╝")
+    print("")
     
-    memory = AgentMemory()
-    
-    # Add some test books
-    print("Adding test books...")
-    memory.add_book(
-        title="Deep Learning",
-        authors="Ian Goodfellow",
-        source="Z-Library",
-        search_topic="deep learning fundamentals",
-        downloaded_by="User_1"
-    )
-    
-    memory.add_book(
-        title="Machine Learning: A Probabilistic Perspective",
-        authors="Kevin Murphy",
-        source="Z-Library", 
-        search_topic="machine learning",
-        downloaded_by="User_2"
-    )
-    
-    # Check for duplicate
-    print("\nChecking for duplicates...")
-    result = memory.check_duplicate("Deep Learning by Goodfellow")
-    print(f"  'Deep Learning by Goodfellow': {result}")
-    
-    result = memory.check_duplicate("Introduction to Deep Learning")
-    print(f"  'Introduction to Deep Learning': {result}")
-    
-    # Get stats
-    print("\nMemory Stats:")
-    stats = memory.get_stats()
-    print(f"  Total books: {stats['total_books']}")
-    print(f"  By user: {stats['by_user']}")
+    # Check if credentials exist
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("❌ Supabase credentials not found!")
+        print("")
+        print("Please add these to your .env file:")
+        print("   SUPABASE_URL=https://your-project.supabase.co")
+        print("   SUPABASE_KEY=your-anon-public-key")
+        print("")
+        print("Get these from: Supabase Dashboard > Settings > API")
+        print("")
+        init_memory_db()  # Show SQL to create table
+    else:
+        print("✅ Supabase credentials found!")
+        print(f"   URL: {SUPABASE_URL[:40]}...")
+        print("")
+        
+        try:
+            memory = AgentMemory()
+            stats = memory.get_stats()
+            print(f"✅ Connected to Supabase!")
+            print(f"   📚 Books in shared memory: {stats['total_books']}")
+            
+            if stats['by_user']:
+                print(f"   👥 Team downloads:")
+                for user, count in stats['by_user'].items():
+                    print(f"      - {user}: {count} books")
+            
+            print("")
+            print("🙏 Ramesh is ready for the team!")
+            
+        except Exception as e:
+            print(f"❌ Connection failed: {e}")
+            print("")
+            init_memory_db()  # Show SQL to create table
