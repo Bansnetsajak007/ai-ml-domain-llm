@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from database import get_db_connection
 from openai_service import check_duplicate_with_openai
 from difflib import SequenceMatcher
+from pymongo.errors import DuplicateKeyError
 
 load_dotenv()
 
@@ -157,8 +158,14 @@ def add_resource():
                         }), 409
 
             # Save
-            db.resources.insert_one(resource_doc)
-            saved_count += 1
+            try:
+                db.resources.insert_one(resource_doc)
+                saved_count += 1
+            except DuplicateKeyError as e:
+                # Handle unique index violation
+                print(f"Duplicate key error at index {index}: {e}")
+                skipped_count += 1
+                continue
             
         return jsonify({
             "message": f"Batch processed. Saved: {saved_count}, Skipped (Already Existed): {skipped_count}",
