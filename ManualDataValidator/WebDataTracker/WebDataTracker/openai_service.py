@@ -7,6 +7,7 @@ load_dotenv()
 
 # Support multiple keys if needed, but defaulting to standard OPENAI_API_KEY
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+LLM_TIMEOUT = int(os.getenv('LLM_TIMEOUT', '30'))  # seconds
 
 def check_duplicate_with_openai(new_resource, existing_candidates):
     """
@@ -65,7 +66,8 @@ def check_duplicate_with_openai(new_resource, existing_candidates):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            timeout=LLM_TIMEOUT
         )
         
         content = response.choices[0].message.content

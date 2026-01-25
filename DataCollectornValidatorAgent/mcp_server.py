@@ -1,6 +1,5 @@
 import asyncio
 import json
-import sqlite3
 import os
 import dotenv
 from fastmcp import FastMCP
@@ -10,8 +9,10 @@ from openai import OpenAI
 # --- CONFIGURATION ---
 BASE_URL = "https://z-lib.sk"
 DOWNLOAD_FOLDER = os.path.abspath("data/books")
-DB_PATH = "shared_memory.db"
 RESOURCES_FILE = "data/resources.json"
+BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "false").lower() == "true"
+DOWNLOAD_COOLDOWN = int(os.getenv("DOWNLOAD_COOLDOWN", "40"))  # seconds
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "30"))  # seconds
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -45,9 +46,19 @@ def clean_metadata_with_llm(raw_title):
         response = client.chat.completions.create(
             model="gpt-4o-mini", # Fast and cheap
             messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            timeout=LLM_TIMEOUT
         )
         return json.loads(response.choices[0].message.content)
+    except TimeoutError:
+        print(f"⚠️ LLM Cleaning timed out after {LLM_TIMEOUT}s")
+        return {
+            "resource_type": "Book",
+            "title": raw_title,
+            "normalized_title": raw_title.lower(),
+            "authors": ["Unknown"],
+            "source": "Z-Library"
+        }
     except Exception as e:
         print(f"⚠️ LLM Cleaning failed: {e}")
         # Fallback if LLM fails
@@ -62,40 +73,22 @@ def clean_metadata_with_llm(raw_title):
 # --- DATABASE & FILE LOGGING ---
 def save_to_json_file(metadata):
     """Appends the new clean entry to resources.json"""
-    with open(RESOURCES_FILE, "r+") as f:
-        data = json.load(f)
-        data["resources"].append(metadata)
-        f.seek(0)
-        json.dump(data, f, indent=4)
+    try:
+        with open(RESOURCES_FILE, "r+") as f:
+            data = json.load(f)
+            data["resources"].append(metadata)
+            f.seek(0)
+            json.dump(data, f, indent=4)
+            f.truncate()  # Fix: Remove any trailing data from old file
+    except json.JSONDecodeError:
+        # File corrupted, create fresh
+        with open(RESOURCES_FILE, "w") as f:
+            json.dump({"resources": [metadata]}, f, indent=4)
+    except Exception as e:
+        print(f"⚠️ Failed to save to JSON file: {e}")
 
-def log_download_to_db(metadata, filename, account):
-    """Updates SQLite with the Cleaned LLM Data"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        INSERT INTO downloads 
-        (title, normalized_title, authors, filename, account_used, full_json) 
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        metadata["title"], 
-        metadata["normalized_title"], 
-        json.dumps(metadata["authors"]), # Store list as string
-        filename, 
-        account,
-        json.dumps(metadata) # Store the full object just in case
-    ))
-    conn.commit()
-    conn.close()
-
-def is_duplicate(normalized_title):
-    """Checks DB using the CLEAN normalized title"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM downloads WHERE normalized_title = ?", (normalized_title,))
-    res = cursor.fetchone()
-    conn.close()
-    return res is not None
+# REMOVED: SQLite functions - using Supabase memory system exclusively
+# All duplicate checking now happens through AgentMemory class
 
 # --- 1. THE CORE LOGIC (Plain Python - Callable by agent.py) ---
 async def core_download_logic(topic: str, account: dict = None, max_books: int = 9, 
@@ -122,8 +115,8 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
     downloaded_books = []  # Track what we downloaded
 
     async with async_playwright() as p:
-        # headless=False so you can SEE it working
-        browser = await p.chromium.launch(headless=False)
+        # Configurable headless mode (set BROWSER_HEADLESS=true for production)
+        browser = await p.chromium.launch(headless=BROWSER_HEADLESS)
         
         print(f"\n🚀 STARTING SESSION: {account['name']}")
 
@@ -242,8 +235,7 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
                             print(f"   🧠 LLM analyzing metadata...")
                             clean_meta = clean_metadata_with_llm(f"{raw_title} by {raw_author}")
                             
-                            # UPDATE LOCAL DB
-                            log_download_to_db(clean_meta, proper_filename, account['name'])
+                            # SAVE TO JSON
                             save_to_json_file(clean_meta)
                             
                             # --- WRITE TO SHARED MEMORY (After Download) ---
@@ -267,8 +259,9 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
                             print(f"   ✅ Indexed: {clean_meta['title'][:50]}...")
                             download_count += 1
                             
-                            print(f"   ⏳ Cooling down for 40s...")
-                            await asyncio.sleep(40)
+                            # Only cooldown if we successfully downloaded
+                            print(f"   ⏳ Cooling down for {DOWNLOAD_COOLDOWN}s...")
+                            await asyncio.sleep(DOWNLOAD_COOLDOWN)
                             
                             # Go back to search results
                             await page.goto(f"{BASE_URL}/s/{topic}")
@@ -293,10 +286,17 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
                         print(f"   ❌ Error processing book: {e}")
         
         except Exception as e:
-            print(f"Session Error: {e}")
-        
-        await context.close()
-        await browser.close()
+            print(f"⚠️ Session Error: {e}")
+        finally:
+            # Always cleanup browser resources
+            try:
+                await context.close()
+            except:
+                pass
+            try:
+                await browser.close()
+            except:
+                pass
     
     return "Download & Indexing Complete.", download_count, downloaded_books
 
