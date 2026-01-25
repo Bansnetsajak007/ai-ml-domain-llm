@@ -97,74 +97,86 @@ def is_duplicate(normalized_title):
     conn.close()
     return res is not None
 
-# --- 1. THE CORE LOGIC (Plain Python - Callable by run.py) ---
-async def core_download_logic(topic: str, accounts_to_use: int = 1, max_books: int = 9):
-    """The actual Playwright automation logic. Returns (message, books_downloaded)."""
+# --- 1. THE CORE LOGIC (Plain Python - Callable by agent.py) ---
+async def core_download_logic(topic: str, account: dict = None, max_books: int = 9, 
+                               memory=None, user_name: str = "unknown"):
+    """
+    The actual Playwright automation logic. 
+    Args:
+        topic: Search topic
+        account: Single account dict with name, remix_userid, remix_userkey
+        max_books: Maximum books to download this session
+        memory: AgentMemory instance for duplicate checking
+        user_name: Name of the user downloading (for tracking)
+    Returns: 
+        (message, books_downloaded, list_of_books) tuple
+    """
     
-    total_downloaded_this_session = 0
-    with open("accounts.json", "r") as f: accounts = json.load(f)
+    # If no account provided, load first from file (for MCP tool compatibility)
+    if account is None:
+        with open("accounts.json", "r") as f: 
+            accounts = json.load(f)
+            account = accounts[0]
+    
+    download_count = 0
+    downloaded_books = []  # Track what we downloaded
 
     async with async_playwright() as p:
         # headless=False so you can SEE it working
         browser = await p.chromium.launch(headless=False)
         
-        for i in range(min(accounts_to_use, len(accounts))):
-            current_acc = accounts[i]
-            print(f"\n🚀 STARTING SESSION: {current_acc['name']}")
+        print(f"\n🚀 STARTING SESSION: {account['name']}")
 
-            context = await browser.new_context()
-            await context.add_cookies([
-                {'name': 'remix_userid', 'value': current_acc['remix_userid'], 'domain': '.z-lib.sk', 'path': '/'},
-                {'name': 'remix_userkey', 'value': current_acc['remix_userkey'], 'domain': '.z-lib.sk', 'path': '/'}
-            ])
-            page = await context.new_page()
+        context = await browser.new_context()
+        await context.add_cookies([
+            {'name': 'remix_userid', 'value': account['remix_userid'], 'domain': '.z-lib.sk', 'path': '/'},
+            {'name': 'remix_userkey', 'value': account['remix_userkey'], 'domain': '.z-lib.sk', 'path': '/'}
+        ])
+        page = await context.new_page()
+        
+        # --- 🛑 MANUAL INTERVENTION BLOCK 🛑 ---
+        try:
+            print("Checking homepage...")
+            await page.goto(f"{BASE_URL}/") 
             
-            # --- 🛑 MANUAL INTERVENTION BLOCK 🛑 ---
-            try:
-                print("Checking homepage...")
-                await page.goto(f"{BASE_URL}/") 
-                
-                print("\n" + "="*50)
-                print(f"🛑 MANUAL OVERRIDE: Please close the popup now!")
-                print(f"⏳ Waiting 20 seconds for you to act...")
-                print("="*50 + "\n")
-                
-                await asyncio.sleep(20) 
-                print("✅ Resuming automation...")
-                    
-            except Exception as e:
-                print(f"Navigation error: {e}")
-            # ---------------------------------------
+            print("\n" + "="*50)
+            print(f"🛑 MANUAL OVERRIDE: Please close the popup now!")
+            print(f"⏳ Waiting 10 seconds for you to act...")
+            print("="*50 + "\n")
             
+            await asyncio.sleep(10) 
+            print("✅ Resuming automation...")
+                
+        except Exception as e:
+            print(f"Navigation error: {e}")
+        # ---------------------------------------
+        
+        try:
+            print(f"🔎 Searching: {topic}...")
+            await page.goto(f"{BASE_URL}/s/{topic}")
+            
+            # --- ROBUST WAIT LOGIC ---
+            # Wait for network idle and the custom z-bookcard elements to load
+            await page.wait_for_load_state("networkidle", timeout=30000)
+            
+            # Z-Library uses custom <z-bookcard> web components
+            # Wait for them to be ready (they get class="ready" when loaded)
             try:
-                print(f"🔎 Searching: {topic}...")
-                await page.goto(f"{BASE_URL}/s/{topic}")
-                
-                # --- ROBUST WAIT LOGIC ---
-                # Wait for network idle and the custom z-bookcard elements to load
-                await page.wait_for_load_state("networkidle", timeout=30000)
-                
-                # Z-Library uses custom <z-bookcard> web components
-                # Wait for them to be ready (they get class="ready" when loaded)
-                try:
-                    await page.wait_for_selector("z-bookcard.ready", timeout=15000)
-                except:
-                    print(f"⚠️ z-bookcard elements not found, trying fallback...")
-                    await page.screenshot(path="debug_search_page.png")
-                    continue
-                
-                # Get all z-bookcard elements
-                bookcards = await page.locator("z-bookcard.ready").all()
-                
-                if not bookcards:
-                    print("⚠️ No book cards found on page.")
-                    await page.screenshot(path="debug_no_books.png")
-                    continue
-                    
+                await page.wait_for_selector("z-bookcard.ready", timeout=15000)
+            except:
+                print(f"⚠️ z-bookcard elements not found, trying fallback...")
+                await page.screenshot(path="debug_search_page.png")
+            
+            # Get all z-bookcard elements
+            bookcards = await page.locator("z-bookcard.ready").all()
+            
+            if not bookcards:
+                print("⚠️ No book cards found on page.")
+                await page.screenshot(path="debug_no_books.png")
+            else:
                 print(f"📚 Found {len(bookcards)} books via z-bookcard elements...")
                 # -------------------------------
                 
-                download_count = 0
                 processed_ids = set()  # Track by book ID to avoid duplicates
                 
                 for idx, bookcard in enumerate(bookcards):
@@ -191,6 +203,17 @@ async def core_download_logic(topic: str, accounts_to_use: int = 1, max_books: i
                         
                         if not raw_title.strip(): 
                             continue 
+                        
+                        # --- CHECK MEMORY BEFORE DOWNLOAD ---
+                        if memory:
+                            dup_check = memory.check_duplicate(raw_title, raw_author)
+                            if dup_check["is_duplicate"]:
+                                similar = dup_check["similar_book"]
+                                print(f"\n⏭️ SKIPPING: {raw_title[:50]}...")
+                                print(f"   🔄 Already downloaded by {similar['downloaded_by']}")
+                                print(f"   📚 Similar to: {similar['title'][:50]}")
+                                print(f"   📊 Similarity: {dup_check['similarity']:.1%}")
+                                continue
                         
                         print(f"\n📖 [{download_count+1}/{max_books}] {raw_title[:60]}...")
                         print(f"   👤 Author: {raw_author[:40]}")
@@ -219,9 +242,27 @@ async def core_download_logic(topic: str, accounts_to_use: int = 1, max_books: i
                             print(f"   🧠 LLM analyzing metadata...")
                             clean_meta = clean_metadata_with_llm(f"{raw_title} by {raw_author}")
                             
-                            # UPDATE DB
-                            log_download_to_db(clean_meta, proper_filename, current_acc['name'])
+                            # UPDATE LOCAL DB
+                            log_download_to_db(clean_meta, proper_filename, account['name'])
                             save_to_json_file(clean_meta)
+                            
+                            # --- WRITE TO SHARED MEMORY (After Download) ---
+                            if memory:
+                                memory.add_book(
+                                    title=clean_meta.get("title", raw_title),
+                                    authors=raw_author,
+                                    source="Z-Library",
+                                    search_topic=topic,
+                                    downloaded_by=user_name
+                                )
+                                print(f"   🧠 Added to shared memory")
+                            
+                            # Track downloaded book
+                            downloaded_books.append({
+                                "title": clean_meta.get("title", raw_title),
+                                "authors": raw_author,
+                                "filename": proper_filename
+                            })
                             
                             print(f"   ✅ Indexed: {clean_meta['title'][:50]}...")
                             download_count += 1
@@ -250,22 +291,20 @@ async def core_download_logic(topic: str, accounts_to_use: int = 1, max_books: i
                         
                     except Exception as e:
                         print(f"   ❌ Error processing book: {e}")
-                
-                total_downloaded_this_session = download_count
-            
-            except Exception as e:
-                print(f"Session Error: {e}")
-            
-            await context.close()
-
+        
+        except Exception as e:
+            print(f"Session Error: {e}")
+        
+        await context.close()
         await browser.close()
-    return "Download & Indexing Complete.", total_downloaded_this_session
+    
+    return "Download & Indexing Complete.", download_count, downloaded_books
 
 # --- 2. THE MCP TOOL (Wrapper - Callable by Claude) ---
 @mcp.tool()
-async def download_books_by_topic(topic: str, accounts_to_use: int = 1, max_books: int = 9):
+async def download_books_by_topic(topic: str, max_books: int = 9):
     """Downloads books, cleans metadata with LLM, and updates DB."""
-    result, count = await core_download_logic(topic, accounts_to_use, max_books)
+    result, count, books = await core_download_logic(topic=topic, max_books=max_books)
     return f"{result} ({count} books downloaded)"
 
 if __name__ == "__main__":
