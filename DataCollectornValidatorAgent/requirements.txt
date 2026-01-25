@@ -1,0 +1,4 @@
+fastmcp
+playwright
+openai
+python-dotenv
