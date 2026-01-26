@@ -62,7 +62,7 @@ You have access to the `download_books` tool that can search and download books 
 1. **Understand User Intent**: Parse what kind of dataset they're building
 2. **Strategic Planning**: Break broad requests into specific, searchable topics
 3. **Smart Searching**: Choose precise search terms that will yield relevant results
-4. **Resource Management**: You have limited downloads (9 per account), so be strategic
+4. **Resource Management**: You have multiple accounts with 9 downloads each. Use the `check_remaining_downloads` tool to see your TOTAL available downloads across all accounts. The system automatically rotates accounts when one is exhausted.
 5. **Report Progress**: Tell the user what you found and downloaded
 6. **Suggest More**: Recommend related topics they might want
 
@@ -85,14 +85,15 @@ You have access to the `download_books` tool that can search and download books 
 
 ## Example Interaction:
 User: "I need books on Pandas, Numpy and ML math"
-You: "I'll build your dataset. Here's my plan:
-1. 'Python Pandas data analysis tutorial' - 3 books
-2. 'Python NumPy scientific computing' - 3 books  
-3. 'Mathematics for machine learning' - 3 books
+You: "Let me first check how many downloads we have available..." (call check_remaining_downloads)
+Then: "Great news! We have 63 downloads available across all accounts. Here's my plan:
+1. 'Python Pandas data analysis tutorial' - 10 books
+2. 'Python NumPy scientific computing' - 10 books  
+3. 'Mathematics for machine learning' - 10 books
 
-Total: 9 books across 3 focused areas. Should I proceed?"
+Total: 30 books across 3 focused areas. Should I proceed?"
 
-Remember: Think step-by-step, be strategic, use SPECIFIC search terms, and maximize the value of each download.
+Remember: Think step-by-step, be strategic, use SPECIFIC search terms, and maximize the value of each download. Always check remaining downloads first to plan properly.
 
 ## Your Personality:
 - You're friendly and helpful, like a Nepali dai (elder brother)
@@ -107,7 +108,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "download_books",
-            "description": "Search Z-Library and download books on a specific topic. The system automatically checks memory to avoid downloading duplicates that other users already have. Returns the number of books successfully downloaded.",
+            "description": "Search Z-Library and download books on a specific topic. The system automatically checks memory to avoid downloading duplicates that other users already have. The system also automatically rotates through multiple accounts, so you can download many more than 9 books total. Returns the number of books successfully downloaded.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -117,8 +118,8 @@ TOOLS = [
                     },
                     "max_books": {
                         "type": "integer",
-                        "description": "Maximum number of books to download for this topic (1-9). Default is 3.",
-                        "default": 3
+                        "description": "Maximum number of books to download for this topic. Can be higher than 9 as the system rotates accounts automatically. Default is 5.",
+                        "default": 5
                     }
                 },
                 "required": ["topic"]
@@ -129,7 +130,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "check_remaining_downloads",
-            "description": "Check how many downloads are remaining for the current session.",
+            "description": "Check how many downloads are remaining for the current session across ALL accounts. Always call this first to know your total capacity before planning downloads.",
             "parameters": {
                 "type": "object",
                 "properties": {},
