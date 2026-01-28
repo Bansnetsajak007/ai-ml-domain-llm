@@ -11,3 +11,6 @@ DataCollectornValidatorAgent/data/
 # OCR pipeline processed data
 ocr_pipeline/Processed_dataset_json/
 ocr_pipeline/processed_dataset_md/
+ocr_pipeline/processed_dataset_latex_md/
+
+LLMenv/

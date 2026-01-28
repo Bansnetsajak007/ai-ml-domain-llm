@@ -1,0 +1,26 @@
+# Web & API
+flask
+openai
+python-dotenv
+
+# Database
+pymongo
+postgrest
+
+# Data Collection
+fastmcp
+playwright
+numpy
+
+# OCR Pipeline
+PyMuPDF
+pytesseract
+pdf2image
+ebooklib
+beautifulsoup4
+python-docx
+tqdm
+pymupdf4llm
+
+# Utils
+python-levenshtein

@@ -1,5 +1,0 @@
-flask
-pymongo
-python-dotenv
-openai
-python-levenshtein
