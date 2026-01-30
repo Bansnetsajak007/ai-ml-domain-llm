@@ -15,8 +15,9 @@ try:
 except ImportError:
     LATEX_SUPPORT = False
  
-DATA_DIR = Path("../Data/Day1/Books")
-OUT_DIR = Path("processed_dataset_latex_md")
+#dynamic path
+DATA_DIR = Path("../Data/Day2")
+OUT_DIR = Path("processed_dataset_latex_md/Day2")
 OUT_DIR.mkdir(exist_ok=True)
  
 # -----------------------

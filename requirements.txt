@@ -2,6 +2,7 @@
 flask
 openai
 python-dotenv
+fastmcp
 
 # Database
 pymongo
@@ -11,6 +12,7 @@ postgrest
 fastmcp
 playwright
 numpy
+playwright
 
 # OCR Pipeline
 PyMuPDF

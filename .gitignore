@@ -14,3 +14,5 @@ ocr_pipeline/processed_dataset_md/
 ocr_pipeline/processed_dataset_latex_md/
 
 LLMenv/
+
+DataCollectornValidatorAgent/__pycache__/
