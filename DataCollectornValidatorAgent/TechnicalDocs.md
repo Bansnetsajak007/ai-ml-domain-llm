@@ -844,7 +844,7 @@ OPENAI_API_KEY=sk-proj-...
 
 # Supabase Cloud Database (required)
 SUPABASE_URL=https://wtyioljwaeetlelkguti.supabase.co
-SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_KEY=KEY
 ```
 
 ### 7.2 `accounts.json` Configuration
@@ -1036,4 +1036,4 @@ Monitor console output for:
 
 ---
 
-**Made with ❤️ and ☕ by Sajak 🇳🇵**
+**Made with ❤️ and ☕ by Sajak**
