@@ -4,8 +4,7 @@ import os
 import dotenv
 from fastmcp import FastMCP
 from playwright.async_api import async_playwright
-from openai import OpenAI 
-from check_site_status import check_site_status
+from openai import OpenAI
 
 # Load environment variables first
 dotenv.load_dotenv()
@@ -116,11 +115,6 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
     Returns: 
         (message, books_downloaded, list_of_books) tuple
     """
-    # First check if site is accessible
-    status = check_site_status()
-    if not status.startswith("OK"):
-        return (f"Site status check failed: {status}", 0, [])
-    
     # If no account provided, load first from config (for MCP tool compatibility)
     if account is None:
         accounts = load_accounts()

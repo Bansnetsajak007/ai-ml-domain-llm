@@ -1,34 +1,22 @@
-import requests
+from playwright.sync_api import sync_playwright
 
-URL = "https://z-lib.sk/"  # Must match BASE_URL in mcp_server.py
-TIMEOUT = 10  # seconds
+url = "https://z-lib.sk/"  # Must match BASE_URL in mcp_server.py
 
 def check_site_status() -> str:
-    """
-    Check if Z-Library site is accessible.
-    Uses HEAD first (lightweight), falls back to GET if HEAD fails.
-    """
     try:
-        # Try HEAD first (faster, less bandwidth)
-        response = requests.head(URL, timeout=TIMEOUT, allow_redirects=True)
-        
-        # Some sites block HEAD requests, try GET if we get 4xx/5xx
-        if response.status_code >= 400:
-            response = requests.get(URL, timeout=TIMEOUT, allow_redirects=True)
-        
-    except requests.exceptions.Timeout:
-        return "NOT OK: Request timed out"
-    except requests.exceptions.ConnectionError as e:
-        return f"NOT OK: Connection failed - {str(e)}"
-    except Exception as e:
-        return f"NOT OK: {str(e)}"
-    
-    if response.status_code == 200:
-        return "OK"
-    elif response.status_code == 503:
-        return "NOT OK: Site is temporarily unavailable (503). Try again later."
-    elif response.status_code == 403:
-        return "NOT OK: Access forbidden (403). Site may be blocking automated requests."
-    else:
-        return f"NOT OK: HTTP response code {response.status_code}"
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, timeout=10000)  # 10 sec timeout
 
+            title = page.title()
+            browser.close()
+
+            print(f"[✔] {url} is up and working! Title: {title}")
+            return "Success"
+    except Exception as e:
+        print(f"[✖] {url} failed: {e}")
+        return "Failed"
+
+# Call the function
+check_site_status()
