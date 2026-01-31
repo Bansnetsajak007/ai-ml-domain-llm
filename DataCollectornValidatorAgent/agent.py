@@ -265,50 +265,87 @@ class LibrarianAgent:
         
         if tool_name == "download_books":
             topic = tool_args.get("topic")
-            max_books = min(tool_args.get("max_books", 3), self.max_per_account - self.downloads_on_current_account)
+            requested_books = tool_args.get("max_books", 5)
+            total_downloaded = 0
+            all_downloaded_books = []
             
-            # Check if we need to rotate accounts
-            if max_books <= 0:
-                if not self._rotate_account_if_needed():
-                    return "ERROR: Uh oh! All accounts exhausted. Ramesh needs rest too, bro. No more downloads available today. Come back tomorrow! 🙏"
-                max_books = min(tool_args.get("max_books", 3), self.max_per_account)
-            
-            if not self.current_account:
-                return "ERROR: No accounts available."
-            
-            print(f"\n🔧 Ramesh is working: download_books(topic='{topic}', max_books={max_books})")
-            print(f"   📊 Using account: {self.current_account['name']}")
-            print(f"   📊 Downloads remaining on this account: {self.max_per_account - self.downloads_on_current_account}")
+            print(f"\n🔧 Ramesh is working: download_books(topic='{topic}', max_books={requested_books})")
             print(f"   👤 User: {self.user_name}")
             
-            try:
-                result, count, downloaded_books = await core_download_logic(
-                    topic=topic,
-                    account=self.current_account,
-                    max_books=max_books,
-                    memory=self.memory,
-                    user_name=self.user_name
-                )
+            # Loop through accounts until we've downloaded all requested books
+            while total_downloaded < requested_books:
+                # Check if current account is exhausted, rotate if needed
+                if self.downloads_on_current_account >= self.max_per_account:
+                    if not self._rotate_account_if_needed():
+                        break  # All accounts exhausted
                 
-                # Check if there was an error (site down, etc.)
-                if count == 0 and result.startswith("Site status check failed"):
-                    return f"ERROR: {result}. The site might be down or blocking requests. Try again later."
+                if not self.current_account:
+                    break
                 
-                self.downloads_on_current_account += count
+                # Calculate how many we can download from current account
+                remaining_on_account = self.max_per_account - self.downloads_on_current_account
+                books_to_download = min(remaining_on_account, requested_books - total_downloaded)
+                
+                if books_to_download <= 0:
+                    break
+                
+                print(f"\n   📊 Using account: {self.current_account['name']}")
+                print(f"   📊 Downloads remaining on this account: {remaining_on_account}")
+                print(f"   📥 Downloading {books_to_download} books in this batch...")
+                
+                try:
+                    result, count, downloaded_books = await core_download_logic(
+                        topic=topic,
+                        account=self.current_account,
+                        max_books=books_to_download,
+                        memory=self.memory,
+                        user_name=self.user_name
+                    )
+                    
+                    # --- HANDLE LIMIT_REACHED SIGNAL ---
+                    # Z-Library showed "Daily limit reached" page - force rotation
+                    if result == "LIMIT_REACHED":
+                        print(f"\n🚫 Account {self.current_account['name']} hit daily limit!")
+                        # Force this account as exhausted
+                        self.downloads_on_current_account = self.max_per_account
+                        if not self._rotate_account_if_needed():
+                            break  # All accounts exhausted
+                        # Continue loop to try with next account
+                        continue
+                    
+                    # Check if there was an error (site down, etc.)
+                    if count == 0 and result.startswith("Site status check failed"):
+                        return f"ERROR: {result}. The site might be down or blocking requests. Try again later."
+                    
+                    # Update counters
+                    self.downloads_on_current_account += count
+                    total_downloaded += count
+                    all_downloaded_books.extend(downloaded_books)
+                    
+                    # If no books found for this topic, don't keep trying
+                    if count == 0:
+                        break
+                    
+                    # If we got fewer than requested, no more books available for this topic
+                    if count < books_to_download:
+                        break
+                        
+                except Exception as e:
+                    return f"ERROR downloading books: {str(e)}"
+            
+            # Record session downloads
+            if total_downloaded > 0:
                 self.session_downloads.append({
                     "topic": topic,
-                    "count": count,
-                    "account": self.current_account['name'],
-                    "books": downloaded_books
+                    "count": total_downloaded,
+                    "account": "multiple",
+                    "books": all_downloaded_books
                 })
-                
-                if count == 0:
-                    return f"No books found for '{topic}'. Try different search terms. Remaining downloads: {self.remaining_downloads}."
-                
-                return f"Successfully downloaded {count} books about '{topic}'. Total session downloads: {sum(d['count'] for d in self.session_downloads)}. Remaining downloads: {self.remaining_downloads}."
             
-            except Exception as e:
-                return f"ERROR downloading books: {str(e)}"
+            if total_downloaded == 0:
+                return f"No books found for '{topic}'. Try different search terms. Remaining downloads: {self.remaining_downloads}."
+            
+            return f"Successfully downloaded {total_downloaded} books about '{topic}'. Total session downloads: {sum(d['count'] for d in self.session_downloads)}. Remaining downloads: {self.remaining_downloads}."
         
         elif tool_name == "check_remaining_downloads":
             return f"Remaining downloads: {self.remaining_downloads} (Current account: {self.current_account['name'] if self.current_account else 'None'}, {self.max_per_account - self.downloads_on_current_account} left on this account)"

@@ -139,7 +139,7 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
                 # --- 🛑 MANUAL INTERVENTION BLOCK 🛑 ---
                 try:
                     print("Checking homepage...")
-                    await page.goto(f"{BASE_URL}/") 
+                    await page.goto(f"{BASE_URL}/", timeout=30000)
                     
                     print("\n" + "="*50)
                     print(f"🛑 MANUAL OVERRIDE: Please close the popup now!")
@@ -157,7 +157,7 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
                     print(f"🔎 Searching: {topic} (PDF only)...")
                     # Filter for PDF format only using Z-Library's extension filter
                     search_url = f"{BASE_URL}/s/{topic}?extensions[]=pdf"
-                    await page.goto(search_url)
+                    await page.goto(search_url, timeout=30000)
                     
                     # --- ROBUST WAIT LOGIC ---
                     # Wait for network idle and the custom z-bookcard elements to load
@@ -284,6 +284,18 @@ async def core_download_logic(topic: str, account: dict = None, max_books: int =
 
                                 except Exception as e:
                                     print(f"   ❌ Download failed: {e}")
+                                    
+                                    # --- CHECK IF WE HIT DAILY LIMIT ---
+                                    try:
+                                        page_content = await page.content()
+                                        if "Daily limit reached" in page_content:
+                                            print("\n🚫 DAILY LIMIT REACHED! Switching accounts...")
+                                            await context.close()
+                                            await browser.close()
+                                            return "LIMIT_REACHED", download_count, downloaded_books
+                                    except:
+                                        pass
+                                    
                                     # Try to go back to search on failure (keep PDF filter)
                                     try:
                                         await page.goto(f"{BASE_URL}/s/{topic}?extensions[]=pdf")
