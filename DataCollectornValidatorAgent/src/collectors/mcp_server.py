@@ -6,13 +6,15 @@ from fastmcp import FastMCP
 from playwright.async_api import async_playwright
 from openai import OpenAI
 
-# Load environment variables first
-dotenv.load_dotenv()
+# Load environment variables from config folder
+config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', '.env')
+dotenv.load_dotenv(config_path)
 
 # --- CONFIGURATION ---
 BASE_URL = "https://z-lib.sk"
-DOWNLOAD_FOLDER = os.path.abspath(os.getenv("DATA_FOLDER", "data/books"))
-RESOURCES_FILE = os.getenv("RESOURCES_FILE", "data/resources.json")
+DATA_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
+DOWNLOAD_FOLDER = os.path.abspath(os.getenv("DATA_FOLDER", os.path.join(DATA_DIR, "books")))
+RESOURCES_FILE = os.getenv("RESOURCES_FILE", os.path.join(DATA_DIR, "resources.json"))
 BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "false").lower() == "true"
 DOWNLOAD_COOLDOWN = int(os.getenv("DOWNLOAD_COOLDOWN", "40"))  # seconds
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "30"))  # seconds
@@ -23,10 +25,12 @@ def load_accounts():
     if accounts_json:
         return json.loads(accounts_json)
     # Fallback to file for local development
-    if os.path.exists("accounts.json"):
-        with open("accounts.json", "r") as f:
+    config_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'config')
+    accounts_file = os.path.join(config_dir, "accounts.json")
+    if os.path.exists(accounts_file):
+        with open(accounts_file, "r") as f:
             return json.load(f)
-    raise ValueError("No accounts found! Set ZLIB_ACCOUNTS env var or create accounts.json")
+    raise ValueError("No accounts found! Set ZLIB_ACCOUNTS env var or create config/accounts.json")
 client = OpenAI() 
 
 mcp = FastMCP("ExpertLibrarian")

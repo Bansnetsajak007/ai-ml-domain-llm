@@ -2,6 +2,7 @@
 RAMESH Memory System - Supabase Edition ☁️
 ============================================
 Cloud-based shared memory for multi-user duplicate detection.
+Now supports BOTH Books (Z-Library) and Papers (arXiv)!
 
 Why Supabase?
 - 4 team members need to share the same memory
@@ -18,6 +19,10 @@ Architecture:
 │                                                     data!       │
 └─────────────────────────────────────────────────────────────────┘
 
+Tables:
+- book_memory: Books from Z-Library
+- paper_memory: Research papers from arXiv
+
 """
 
 import os
@@ -26,7 +31,9 @@ from openai import OpenAI
 from postgrest import SyncPostgrestClient
 import dotenv
 
-dotenv.load_dotenv()
+# Load config from config folder
+config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', '.env')
+dotenv.load_dotenv(config_path)
 
 # OpenAI for embeddings
 openai_client = OpenAI()
@@ -98,6 +105,34 @@ CREATE INDEX IF NOT EXISTS idx_downloaded_by ON book_memory(downloaded_by);
     print("-"*60)
     print("")
     print("3. Click 'Run'")
+    print("")
+    print("="*60)
+    print("📄 PAPER MEMORY TABLE (for arXiv):")
+    print("="*60)
+    print("")
+    paper_sql = """
+CREATE TABLE IF NOT EXISTS paper_memory (
+    id SERIAL PRIMARY KEY,
+    arxiv_id TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    authors TEXT,
+    abstract TEXT,
+    categories TEXT,
+    embedding FLOAT8[],
+    downloaded_by TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_arxiv_id ON paper_memory(arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_paper_normalized_title ON paper_memory(normalized_title);
+CREATE INDEX IF NOT EXISTS idx_paper_downloaded_by ON paper_memory(downloaded_by);
+    """
+    print(paper_sql)
+    print("-"*60)
+    print("")
+    print("✅ Then you're ready to use Ramesh with arXiv support!")
+    print("="*60)
     print("")
     print("✅ Then you're ready to use Ramesh!")
     print("="*60)
@@ -350,6 +385,238 @@ class AgentMemory:
         except Exception as e:
             print(f"⚠️ Search failed: {e}")
             return []
+    
+    # ========================================
+    # PAPER MEMORY METHODS (arXiv)
+    # ========================================
+    
+    def check_paper_duplicate(self, arxiv_id: str, title: str) -> dict:
+        """
+        Check if a paper already exists in shared memory.
+        First checks by arxiv_id (exact match), then by title similarity.
+        
+        Returns:
+            {
+                "is_duplicate": bool,
+                "similar_paper": dict or None,
+                "similarity": float
+            }
+        """
+        # First, check exact arxiv_id match
+        try:
+            response = self.client.from_("paper_memory").select(
+                "id, arxiv_id, title, authors, downloaded_by"
+            ).eq("arxiv_id", arxiv_id).execute()
+            
+            if response.data:
+                row = response.data[0]
+                return {
+                    "is_duplicate": True,
+                    "similar_paper": {
+                        "id": row["id"],
+                        "arxiv_id": row["arxiv_id"],
+                        "title": row["title"],
+                        "authors": row["authors"],
+                        "downloaded_by": row["downloaded_by"],
+                        "similarity": 1.0
+                    },
+                    "similarity": 1.0
+                }
+        except Exception as e:
+            print(f"⚠️ arXiv ID check failed: {e}")
+        
+        # If no exact match, check title similarity
+        paper_text = f"{title}"
+        new_embedding = get_embedding(paper_text)
+        
+        if new_embedding is None:
+            return {"is_duplicate": False, "similar_paper": None, "similarity": 0.0}
+        
+        try:
+            response = self.client.from_("paper_memory").select(
+                "id, arxiv_id, title, authors, embedding, downloaded_by"
+            ).not_.is_("embedding", "null").execute()
+            
+            max_similarity = 0.0
+            most_similar = None
+            
+            for row in response.data:
+                if row.get("embedding"):
+                    stored_embedding = row["embedding"]
+                    similarity = cosine_similarity(new_embedding, stored_embedding)
+                    
+                    if similarity > max_similarity:
+                        max_similarity = similarity
+                        most_similar = {
+                            "id": row["id"],
+                            "arxiv_id": row["arxiv_id"],
+                            "title": row["title"],
+                            "authors": row["authors"],
+                            "downloaded_by": row["downloaded_by"],
+                            "similarity": similarity
+                        }
+            
+            is_dup = max_similarity >= SIMILARITY_THRESHOLD
+            
+            return {
+                "is_duplicate": is_dup,
+                "similar_paper": most_similar if is_dup else None,
+                "similarity": max_similarity
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Paper similarity check failed: {e}")
+            return {"is_duplicate": False, "similar_paper": None, "similarity": 0.0}
+    
+    def add_paper(self, arxiv_id: str, title: str, authors: str, 
+                  abstract: str, categories: str, downloaded_by: str) -> bool:
+        """
+        Add a new paper to shared cloud memory after downloading.
+        
+        Returns:
+            True if added successfully, False otherwise
+        """
+        paper_text = f"{title} by {authors}"
+        embedding = get_embedding(paper_text)
+        
+        try:
+            data = {
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "normalized_title": title.lower().strip(),
+                "authors": authors,
+                "abstract": abstract[:1000] if abstract else "",  # Limit abstract length
+                "categories": categories,
+                "embedding": embedding,
+                "downloaded_by": downloaded_by
+            }
+            
+            self.client.from_("paper_memory").insert(data).execute()
+            return True
+            
+        except Exception as e:
+            # Handle duplicate arxiv_id gracefully
+            if "duplicate" in str(e).lower():
+                print(f"   ⚠️ Paper already in memory: {arxiv_id}")
+            else:
+                print(f"⚠️ Failed to add paper to Supabase: {e}")
+            return False
+    
+    def get_all_papers(self) -> list:
+        """Get all papers in shared memory."""
+        try:
+            response = self.client.from_("paper_memory").select(
+                "arxiv_id, title, authors, categories, downloaded_by, created_at"
+            ).order("created_at", desc=True).execute()
+            
+            return [
+                {
+                    "arxiv_id": row["arxiv_id"],
+                    "title": row["title"],
+                    "authors": row["authors"],
+                    "categories": row["categories"],
+                    "downloaded_by": row["downloaded_by"],
+                    "timestamp": row["created_at"]
+                }
+                for row in response.data
+            ]
+        except Exception as e:
+            print(f"⚠️ Failed to fetch papers: {e}")
+            return []
+    
+    def get_papers_by_category(self, category: str) -> list:
+        """Get all papers in a specific arXiv category."""
+        try:
+            response = self.client.from_("paper_memory").select(
+                "arxiv_id, title, authors, downloaded_by"
+            ).ilike("categories", f"%{category}%").execute()
+            
+            return [
+                {"arxiv_id": r["arxiv_id"], "title": r["title"], 
+                 "authors": r["authors"], "downloaded_by": r["downloaded_by"]} 
+                for r in response.data
+            ]
+        except Exception as e:
+            print(f"⚠️ Category search failed: {e}")
+            return []
+    
+    def get_paper_stats(self) -> dict:
+        """Get memory statistics for papers."""
+        try:
+            response = self.client.from_("paper_memory").select(
+                "downloaded_by, categories"
+            ).execute()
+            
+            total = len(response.data)
+            by_user = {}
+            by_category = {}
+            
+            for row in response.data:
+                user = row.get("downloaded_by", "unknown")
+                categories = row.get("categories", "unknown")
+                
+                by_user[user] = by_user.get(user, 0) + 1
+                
+                # Parse categories (comma-separated)
+                for cat in categories.split(","):
+                    cat = cat.strip()
+                    if cat:
+                        by_category[cat] = by_category.get(cat, 0) + 1
+            
+            # Sort categories by count
+            sorted_categories = dict(sorted(by_category.items(), key=lambda x: x[1], reverse=True)[:10])
+            
+            return {
+                "total_papers": total,
+                "by_user": by_user,
+                "top_categories": sorted_categories
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Paper stats query failed: {e}")
+            return {"total_papers": 0, "by_user": {}, "top_categories": {}}
+    
+    def search_papers_similar(self, query: str, limit: int = 5) -> list:
+        """Search for papers similar to a query using embeddings."""
+        query_embedding = get_embedding(query)
+        
+        if query_embedding is None:
+            return []
+        
+        try:
+            response = self.client.from_("paper_memory").select(
+                "arxiv_id, title, authors, embedding, downloaded_by"
+            ).not_.is_("embedding", "null").execute()
+            
+            results = []
+            for row in response.data:
+                if row.get("embedding"):
+                    similarity = cosine_similarity(query_embedding, row["embedding"])
+                    results.append({
+                        "arxiv_id": row["arxiv_id"],
+                        "title": row["title"],
+                        "authors": row["authors"],
+                        "downloaded_by": row["downloaded_by"],
+                        "similarity": similarity
+                    })
+            
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            return results[:limit]
+            
+        except Exception as e:
+            print(f"⚠️ Paper search failed: {e}")
+            return []
+    
+    def get_combined_stats(self) -> dict:
+        """Get combined statistics for both books and papers."""
+        book_stats = self.get_stats()
+        paper_stats = self.get_paper_stats()
+        
+        return {
+            "books": book_stats,
+            "papers": paper_stats,
+            "total_resources": book_stats.get("total_books", 0) + paper_stats.get("total_papers", 0)
+        }
 
 
 # Quick test / setup
@@ -357,6 +624,7 @@ if __name__ == "__main__":
     print("")
     print("╔═══════════════════════════════════════════════════════════════════╗")
     print("║  RAMESH MEMORY SYSTEM - SUPABASE CLOUD EDITION ☁️                 ║")
+    print("║  Now with Books (Z-Library) + Papers (arXiv) support!             ║")
     print("╚═══════════════════════════════════════════════════════════════════╝")
     print("")
     
@@ -378,14 +646,35 @@ if __name__ == "__main__":
         
         try:
             memory = AgentMemory()
-            stats = memory.get_stats()
-            print(f"✅ Connected to Supabase!")
-            print(f"   📚 Books in shared memory: {stats['total_books']}")
             
-            if stats['by_user']:
-                print(f"   👥 Team downloads:")
-                for user, count in stats['by_user'].items():
+            # Get combined stats
+            combined = memory.get_combined_stats()
+            book_stats = combined["books"]
+            paper_stats = combined["papers"]
+            
+            print(f"✅ Connected to Supabase!")
+            print(f"")
+            print(f"📊 MEMORY STATISTICS")
+            print(f"{'='*50}")
+            print(f"   📚 Books in memory: {book_stats.get('total_books', 0)}")
+            print(f"   📄 Papers in memory: {paper_stats.get('total_papers', 0)}")
+            print(f"   📦 Total resources: {combined['total_resources']}")
+            print(f"")
+            
+            if book_stats.get('by_user'):
+                print(f"   👥 Book downloads by user:")
+                for user, count in book_stats['by_user'].items():
                     print(f"      - {user}: {count} books")
+            
+            if paper_stats.get('by_user'):
+                print(f"   👥 Paper downloads by user:")
+                for user, count in paper_stats['by_user'].items():
+                    print(f"      - {user}: {count} papers")
+            
+            if paper_stats.get('top_categories'):
+                print(f"   🏷️ Top arXiv categories:")
+                for cat, count in list(paper_stats['top_categories'].items())[:5]:
+                    print(f"      - {cat}: {count} papers")
             
             print("")
             print("🙏 Ramesh is ready for the team!")

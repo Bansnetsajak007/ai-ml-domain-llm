@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+*.env
+!.env.example
+config/.env
+
+# Secrets
+config/accounts.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (large files)
+data/books/*.pdf
+data/papers/*.pdf
+
+# Logs (optional - uncomment to ignore)
+# logs/*.json
+
+# Virtual environment
+venv/
+LLMenv/
+.venv/
+
+# Database files
+*.db
+*.sqlite
+
+# Temp files
+*.tmp
+*.temp

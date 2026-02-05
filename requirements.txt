@@ -8,11 +8,15 @@ fastmcp
 pymongo
 postgrest
 
-# Data Collection
+# Data Collection - Z-Library
 fastmcp
 playwright
 numpy
 playwright
+
+# Data Collection - arXiv (NEW!)
+aiohttp
+aiofiles
 
 # OCR Pipeline
 PyMuPDF

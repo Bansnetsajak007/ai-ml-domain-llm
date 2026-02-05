@@ -1,4 +1,4 @@
-# 🤖 RAMESH — AI-Powered Data Collector Agent
+# 🤖 RAMESH — AI-Powered Data Collector Agent v2.0
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗
@@ -10,14 +10,33 @@
 ║   ██║  ██║██║  ██║██║ ╚═╝ ██║███████╗███████║██║  ██║                         ║
 ║   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝                         ║
 ║                                                                               ║
-║            🤖 AI-Powered Data Collector Agent                                 ║
+║             🤖 AI-Powered Data Collector Agent v2.0                           ║
+║                  📚 Z-Library Books + 📄 arXiv Papers                         ║
 ║                                                                               ║
-║   "Namaste! I'm Ramesh. I collect books so you don't have to." 🙏             ║
+║   "Namaste! I'm Ramesh. I collect books AND papers now!" 🙏                  ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ## A Revolutionary Approach to Automated Dataset Collection 🇳🇵
+
+---
+
+## 🆕 What's New in v2.0: arXiv Integration!
+
+RAMESH now supports **TWO data sources**:
+
+| Source | Type | Limits | Use Case |
+|--------|------|--------|----------|
+| 📚 **Z-Library** | Books, Textbooks | Account quotas | Comprehensive learning materials |
+| 📄 **arXiv** | Research Papers | **NO LIMITS!** | Large-scale research datasets (4k-5k papers) |
+
+### arXiv Mode Features:
+- ♾️ **No download limits** — collect thousands of papers!
+- 🚀 **Fast API-based collection** — no browser automation needed
+- 🏷️ **Category filtering** — target specific research areas (cs.CL, cs.LG, etc.)
+- 🔄 **Automatic deduplication** — same smart memory system
+- 📊 **Bulk collection** — perfect for building large datasets
 
 ---
 
